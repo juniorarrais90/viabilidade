@@ -36,6 +36,19 @@ move cada arquivo para a pasta certa e separa o que parece descartável.
 2. Executar como: **Eu**. Quem pode acessar: **Somente eu**.
 3. Abra o link gerado. Ele funciona no computador e no celular, logado na mesma conta.
 
+O painel também serve para organizar à mão:
+
+- Clique numa pasta para abrir a galeria (60 arquivos por vez, os mais recentes primeiro).
+- Toque nos arquivos para selecionar; **Mover para…** troca de pasta e corrige a planilha.
+- **Apagar** envia os selecionados para a lixeira do Google Drive (ficam 30 dias recuperáveis).
+  Não há exclusão definitiva pelo painel.
+
+Depois de alterar `Codigo.gs` ou `Painel.html`, publique em **Implantar** > **Gerenciar implantações** >
+lápis > **Nova versão**. O link continua o mesmo.
+
+O modelo padrão é `claude-haiku-5-5` (linha `MODELO` do `Codigo.gs`), bem mais barato;
+`claude-opus-5-5` classifica melhor e custa muito mais.
+
 ## Processar tudo
 
 - `iniciar` liga o processamento automático (um lote a cada 5 minutos).

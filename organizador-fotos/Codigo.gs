@@ -19,7 +19,7 @@ var CONFIG = {
   PASTA_RAIZ: 'Banco de Imagens',
   PASTA_ENTRADA: 'Entrada',
   PLANILHA: 'Organizador de Fotos - Registro',
-  MODELO: 'claude-opus-5-5',      // trocar para 'claude-haiku-5-5' reduz muito o custo
+  MODELO: 'claude-haiku-5-5',     // 'claude-opus-5-5' classifica melhor, mas custa muito mais
   ARQUIVOS_POR_PEDIDO: 8,         // miniaturas enviadas à IA em cada pedido
   TEMPO_MAX_MS: 4.5 * 60 * 1000,  // cada execução para antes do limite de 6 min do Google
   LIMITE_TESTE: 100,
@@ -67,6 +67,7 @@ var CATEGORIAS = [
 var PASTA_DUPLICADOS = 'Duplicados';
 var PASTA_APAGAR = 'Sugestão de apagar';
 var PASTA_SEM_MINIATURA = 'Sem miniatura';
+var DESTINO_LIXEIRA = 'Lixeira do Drive';   // marca na planilha o que foi apagado pelo painel
 
 var COLUNAS = ['Data', 'Nome', 'ID', 'Tipo', 'Categoria', 'Limpeza', 'Motivo', 'Descrição',
                'Destino', 'Tamanho (MB)', 'Caminho original', 'MD5'];
@@ -334,12 +335,14 @@ function obterPainel() {
   var linhas = ultima > 1 ? aba.getRange(2, 1, ultima - 1, COLUNAS.length).getValues() : [];
   var grupos = {};
   var ordem = [];
-  var registrar = function (nome, grupo) { grupos[nome] = { nome: nome, grupo: grupo, total: 0, ids: [] }; ordem.push(nome); };
-  CATEGORIAS.forEach(function (c) { registrar(c.pasta, c.pasta.indexOf('/') > 0 ? c.pasta.split('/')[0] : 'Triagem'); });
+  var registrar = function (nome, grupo, tipo) { grupos[nome] = { nome: nome, grupo: grupo, tipo: tipo || 'ambos', total: 0, ids: [] }; ordem.push(nome); };
+  CATEGORIAS.forEach(function (c) { registrar(c.pasta, c.pasta.indexOf('/') > 0 ? c.pasta.split('/')[0] : 'Triagem', c.tipo); });
   [PASTA_APAGAR, PASTA_DUPLICADOS, PASTA_SEM_MINIATURA].forEach(function (p) { registrar(p, 'Triagem'); });
 
-  var t = { arquivos: linhas.length, fotos: 0, videos: 0, duplicados: 0, apagar: 0, revisar: 0, mbApagar: 0 };
+  var t = { arquivos: 0, fotos: 0, videos: 0, duplicados: 0, apagar: 0, revisar: 0, mbApagar: 0, lixeira: 0 };
   linhas.forEach(function (l) {
+    if (l[8] === DESTINO_LIXEIRA) { t.lixeira++; return; }
+    t.arquivos++;
     if (l[3] === 'video') t.videos++; else t.fotos++;
     if (l[8] === PASTA_DUPLICADOS) t.duplicados++;
     if (l[5] === 'apagar') { t.apagar++; t.mbApagar += Number(l[9]) || 0; }
@@ -349,7 +352,7 @@ function obterPainel() {
   });
   var cartoes = ordem.map(function (nome) {
     var g = grupos[nome];
-    return { nome: nome.replace(/^.*\//, ''), grupo: g.grupo, total: g.total, ids: g.ids.slice(-12) };
+    return { nome: nome.replace(/^.*\//, ''), destino: nome, tipo: g.tipo, grupo: g.grupo, total: g.total, ids: g.ids.slice(-12) };
   });
   return {
     configurado: true,
@@ -362,17 +365,22 @@ function obterPainel() {
   };
 }
 
-/** Miniaturas pequenas para o painel, em data URI. Guarda em cache por 6 horas. */
-function obterMiniaturas(ids) {
+/**
+ * Miniaturas para o painel, em data URI. Guarda em cache por 6 horas.
+ * largura: 96 (cartões da tela inicial) ou 240 (galeria de uma pasta).
+ */
+function obterMiniaturas(ids, largura) {
+  largura = Number(largura) === 240 ? 240 : 96;
+  var prefixo = (largura === 240 ? 'g_' : 'm_');
   ids = (ids || []).slice(0, 40);
   var cache = CacheService.getScriptCache();
-  var achados = cache.getAll(ids.map(function (id) { return 'm_' + id; }));
+  var achados = cache.getAll(ids.map(function (id) { return prefixo + id; }));
   var saida = {};
   var faltam = [];
-  ids.forEach(function (id) { if (achados['m_' + id]) saida[id] = achados['m_' + id]; else faltam.push(id); });
+  ids.forEach(function (id) { if (achados[prefixo + id]) saida[id] = achados[prefixo + id]; else faltam.push(id); });
   if (faltam.length) {
     var respostas = UrlFetchApp.fetchAll(faltam.map(function (id) {
-      return { url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w96', headers: autorizacao_(), muteHttpExceptions: true };
+      return { url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w' + largura, headers: autorizacao_(), muteHttpExceptions: true };
     }));
     var novos = {};
     respostas.forEach(function (resp, i) {
@@ -382,11 +390,96 @@ function obterMiniaturas(ids) {
       if (tipo.indexOf('image/') !== 0) return;
       var uri = 'data:' + tipo + ';base64,' + Utilities.base64Encode(blob.getBytes());
       saida[faltam[i]] = uri;
-      if (uri.length < 90000) novos['m_' + faltam[i]] = uri;
+      if (uri.length < 90000) novos[prefixo + faltam[i]] = uri;
     });
     cache.putAll(novos, 21600);
   }
   return saida;
+}
+
+/* ------------------------------------------------------------------ */
+/* Painel: abrir uma pasta, mover e apagar                             */
+/* ------------------------------------------------------------------ */
+
+/** Arquivos de uma pasta de destino, os mais recentes primeiro, de 60 em 60. */
+function listarPasta(destino, inicio) {
+  var aba = abaRegistro_();
+  var ultima = aba.getLastRow();
+  var linhas = ultima > 1 ? aba.getRange(2, 1, ultima - 1, COLUNAS.length).getValues() : [];
+  var achados = [];
+  for (var i = linhas.length - 1; i >= 0; i--) {
+    var l = linhas[i];
+    if (l[8] === destino) {
+      achados.push({ id: String(l[2]), nome: String(l[1]), tipo: String(l[3]), limpeza: String(l[5]),
+                     motivo: String(l[6]), descricao: String(l[7]), mb: Number(l[9]) || 0 });
+    }
+  }
+  inicio = Number(inicio) || 0;
+  return { destino: destino, inicio: inicio, total: achados.length, itens: achados.slice(inicio, inicio + 60) };
+}
+
+/** Move os arquivos escolhidos no painel para outra pasta e corrige a planilha. */
+function moverArquivos(ids, destino) {
+  var pastas = JSON.parse(PropertiesService.getScriptProperties().getProperty('PASTAS'));
+  var cat = CATEGORIAS.filter(function (c) { return c.pasta === destino; })[0];
+  var idPasta = cat ? pastas[cat.chave]
+    : destino === PASTA_APAGAR ? pastas._apagar
+    : destino === PASTA_DUPLICADOS ? pastas._duplicados
+    : destino === PASTA_SEM_MINIATURA ? pastas._sem_miniatura : null;
+  if (!idPasta) throw new Error('Pasta desconhecida: ' + destino);
+  var pasta = DriveApp.getFolderById(idPasta);
+  return atualizarLinhas_(ids, function (id, linha) {
+    DriveApp.getFileById(id).moveTo(pasta);
+    if (cat) linha[4] = cat.chave;
+    linha[5] = destino === PASTA_APAGAR ? 'apagar' : 'manter';
+    linha[6] = 'Movido manualmente pelo painel';
+    linha[8] = destino;
+  });
+}
+
+/**
+ * Envia os arquivos escolhidos para a lixeira do Google Drive.
+ * Não é exclusão definitiva: o Drive guarda a lixeira por 30 dias.
+ */
+function apagarArquivos(ids) {
+  return atualizarLinhas_(ids, function (id, linha) {
+    DriveApp.getFileById(id).setTrashed(true);
+    linha[5] = 'apagado';
+    linha[6] = 'Enviado para a lixeira pelo painel';
+    linha[8] = DESTINO_LIXEIRA;
+  });
+}
+
+/** Aplica uma ação a cada arquivo e regrava a linha dele na planilha. */
+function atualizarLinhas_(ids, acao) {
+  ids = (ids || []).slice(0, 200);
+  var aba = abaRegistro_();
+  var ultima = aba.getLastRow();
+  var coluna = ultima > 1 ? aba.getRange(2, 3, ultima - 1, 1).getValues() : [];
+  var linhaDe = {};
+  coluna.forEach(function (l, i) { linhaDe[l[0]] = i + 2; });
+  var feitos = [];
+  var falhas = 0;
+  ids.forEach(function (id) {
+    var n = linhaDe[id];
+    if (!n) { falhas++; return; }
+    try {
+      var faixa = aba.getRange(n, 1, 1, COLUNAS.length);
+      var linha = faixa.getValues()[0];
+      acao(id, linha);
+      faixa.setValues([linha]);
+      feitos.push(id);
+    } catch (e) {
+      falhas++;
+    }
+  });
+  return { feitos: feitos, falhas: falhas };
+}
+
+function abaRegistro_() {
+  var id = PropertiesService.getScriptProperties().getProperty('PLANILHA_ID');
+  if (!id) throw new Error('Execute configurar() primeiro.');
+  return SpreadsheetApp.openById(id).getSheetByName('Registro');
 }
 
 /* ------------------------------------------------------------------ */
