@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --fundo: #F6F2EA; --cartao: #FFFFFF; --tinta: #161B2B; --suave: #5E6475;
+    --linha: #E4DCCB; --ouro: #8C6F35; --ouro-claro: #C9A961; --alerta: #AA1A1A; --ok: #2A7A3A;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--tinta); font-family: 'Inter', Arial, sans-serif; font-size: 15px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+  .marca { font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ouro); }
+  h1 { margin: 4px 0 0; font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+  .estado { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--suave); }
+  .ponto { width: 9px; height: 9px; border-radius: 50%; background: var(--suave); }
+  .ponto.ativo { background: var(--ok); animation: pulsa 1.6s infinite; }
+  @keyframes pulsa { 50% { opacity: .35; } }
+
+  .contadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 24px 0 8px; }
+  .contador { background: var(--cartao); border: 1px solid var(--linha); border-radius: 10px; padding: 14px 16px; }
+  .contador span { display: block; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--suave); }
+  .contador b { display: block; margin-top: 6px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .contador.destaque b { color: var(--alerta); }
+  .custo { font-size: 12px; color: var(--suave); margin: 0 0 8px; }
+
+  h2 { margin: 28px 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ouro); }
+  .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .pasta { background: var(--cartao); border: 1px solid var(--linha); border-radius: 10px; padding: 14px; min-width: 0; }
+  .pasta header { align-items: center; margin-bottom: 10px; }
+  .pasta h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .pasta .total { font-size: 14px; font-weight: 700; color: var(--ouro); font-variant-numeric: tabular-nums; }
+  .minis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; min-height: 36px; }
+  .minis img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: var(--linha); animation: chega .5s ease-out; }
+  @keyframes chega { from { opacity: 0; transform: translateY(-14px) scale(.6) rotate(-8deg); } }
+  .vazio { font-size: 12px; color: var(--suave); }
+  .aviso { background: var(--cartao); border: 1px solid var(--linha); border-left: 4px solid var(--ouro-claro); border-radius: 8px; padding: 14px 16px; margin-top: 24px; }
+  @media (prefers-reduced-motion: reduce) { .minis img, .ponto.ativo { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="marca">Arrais Advogados</div>
+      <h1>Organizador de Fotos e Vídeos</h1>
+    </div>
+    <div class="estado"><span class="ponto" id="ponto"></span><span id="estado">Carregando…</span></div>
+  </header>
+
+  <section class="contadores" id="contadores"></section>
+  <p class="custo" id="custo"></p>
+  <div id="conteudo"></div>
+</main>
+
+<script>
+  var miniaturas = {};   // id -> data URI já baixada
+  var pedindo = false;
+
+  function numero(n) { return Number(n || 0).toLocaleString('pt-BR'); }
+
+  function desenhar(d) {
+    var ponto = document.getElementById('ponto');
+    var estado = document.getElementById('estado');
+    if (!d || !d.configurado) {
+      estado.textContent = 'Ainda não configurado';
+      document.getElementById('conteudo').innerHTML =
+        '<div class="aviso">Execute a função <b>configurar</b> no editor do Apps Script para criar as pastas.</div>';
+      return;
+    }
+    ponto.className = 'ponto' + (d.ativo ? ' ativo' : '');
+    estado.textContent = d.ativo ? 'Organizando automaticamente' : 'Processamento pausado';
+
+    var t = d.totais;
+    var itens = [
+      ['Arquivos organizados', numero(t.arquivos)], ['Fotos', numero(t.fotos)], ['Vídeos', numero(t.videos)],
+      ['Duplicados', numero(t.duplicados)], ['Para revisar', numero(t.revisar)],
+      ['Sugestão de apagar', numero(t.apagar), true], ['Espaço a liberar', (t.mbApagar / 1024).toFixed(1).replace('.', ',') + ' GB', true]
+    ];
+    document.getElementById('contadores').innerHTML = itens.map(function (i) {
+      return '<div class="contador' + (i[2] ? ' destaque' : '') + '"><span>' + i[0] + '</span><b>' + i[1] + '</b></div>';
+    }).join('');
+    document.getElementById('custo').textContent = 'Uso da IA até agora: ' + numero(d.tokensEntrada) +
+      ' tokens de entrada e ' + numero(d.tokensSaida) + ' de saída (' + d.modelo + ').';
+
+    var grupos = {};
+    var ordem = [];
+    d.cartoes.forEach(function (c) {
+      if (!grupos[c.grupo]) { grupos[c.grupo] = []; ordem.push(c.grupo); }
+      grupos[c.grupo].push(c);
+    });
+    var faltam = [];
+    document.getElementById('conteudo').innerHTML = ordem.map(function (g) {
+      return '<h2>' + g + '</h2><div class="grade">' + grupos[g].map(function (c) {
+        var imgs = c.ids.map(function (id) {
+          if (miniaturas[id]) return '<img alt="" src="' + miniaturas[id] + '">';
+          if (!(id in miniaturas)) faltam.push(id);  // '' = já tentou e não há miniatura
+          return '';
+        }).join('');
+        return '<article class="pasta"><header><h3>' + c.nome + '</h3><span class="total">' + numero(c.total) +
+          '</span></header><div class="minis">' + (imgs || (c.total ? '' : '<span class="vazio">Vazia</span>')) + '</div></article>';
+      }).join('') + '</div>';
+    }).join('');
+
+    if (faltam.length && !pedindo) {
+      pedindo = true;
+      google.script.run.withSuccessHandler(function (novas) {
+        pedindo = false;
+        var chegou = false;
+        Object.keys(novas || {}).forEach(function (id) { miniaturas[id] = novas[id]; chegou = true; });
+        faltam.slice(0, 40).forEach(function (id) { if (!miniaturas[id]) miniaturas[id] = ''; });
+        if (chegou) atualizar();
+      }).withFailureHandler(function () { pedindo = false; }).obterMiniaturas(faltam.slice(0, 40));
+    }
+  }
+
+  function atualizar() {
+    google.script.run.withSuccessHandler(desenhar).withFailureHandler(function (e) {
+      document.getElementById('estado').textContent = 'Falha ao carregar: ' + (e && e.message ? e.message : e);
+    }).obterPainel();
+  }
+
+  atualizar();
+  setInterval(atualizar, 20000);
+</script>
+</body>
+</html>
