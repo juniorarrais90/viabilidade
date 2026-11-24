@@ -61,6 +61,7 @@ O modelo padrão é `claude-haiku-5-5` (linha `MODELO` do `Codigo.gs`), bem mais
 | Grupo | Pasta | O que vai para lá |
 |---|---|---|
 | Fotos | Fotos minhas | Retratos e fotos em que você é o assunto principal |
+| Fotos | Capas e artes de vídeo | Capas de Reel, thumbnails e artes montadas para post |
 | Fotos | Escritório e equipe | Ambiente do escritório, equipe, atendimento |
 | Fotos | Eventos e palestras | Eventos profissionais, cursos, audiências |
 | Fotos | Família e pessoal | Família, amigos, lazer |
@@ -80,7 +81,8 @@ O modelo padrão é `claude-haiku-5-5` (linha `MODELO` do `Codigo.gs`), bem mais
 | Triagem | Não identificado / Sem miniatura | O que a IA não conseguiu classificar |
 
 Para mudar as pastas ou os critérios, edite a lista `CATEGORIAS` no início de `Codigo.gs`
-e execute `configurar` de novo.
+e execute `configurar` de novo. Para reavaliar o que já foi classificado, ajuste a lista
+`RECLASSIFICAR` e execute `reclassificar` até o registro dizer "concluída".
 
 ## Limites conhecidos
 

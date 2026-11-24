@@ -29,7 +29,9 @@ var CONFIG = {
 // Pastas de destino. "tipo" restringe a categoria a fotos, a vídeos ou a ambos.
 var CATEGORIAS = [
   { chave: 'foto_minha',      tipo: 'foto',  pasta: 'Fotos/Fotos minhas',
-    regra: 'retrato ou foto em que o dono do acervo (advogado, homem, cerca de 36 anos, costuma usar terno) é o assunto principal' },
+    regra: 'fotografia (sem texto nem arte sobreposta) em que o dono do acervo (advogado, homem, cerca de 36 anos, costuma usar terno) é o assunto principal' },
+  { chave: 'arte_capa',       tipo: 'foto',  pasta: 'Fotos/Capas e artes de vídeo',
+    regra: 'capa ou arte montada para vídeo ou post: imagem com título em letras grandes, faixas, logotipo ou elementos gráficos (thumbnail de YouTube, capa de Reel, card de rede social), em geral com o dono do acervo recortado; usar esta categoria mesmo quando ele é o assunto principal' },
   { chave: 'foto_escritorio', tipo: 'foto',  pasta: 'Fotos/Escritório e equipe',
     regra: 'ambiente de escritório de advocacia, equipe de trabalho, atendimento, fachada, mesa de trabalho' },
   { chave: 'foto_evento',     tipo: 'foto',  pasta: 'Fotos/Eventos e palestras',
@@ -45,7 +47,7 @@ var CATEGORIAS = [
   { chave: 'documento',       tipo: 'foto',  pasta: 'Fotos/Documentos fotografados',
     regra: 'foto de documento, papel, contrato, boleto, comprovante, receita, quadro com texto' },
   { chave: 'imagem_recebida', tipo: 'foto',  pasta: 'Fotos/Memes e imagens recebidas',
-    regra: 'meme, figurinha, arte pronta, banner, imagem de corrente, material claramente recebido de terceiros' },
+    regra: 'meme, figurinha, banner ou arte de terceiros, imagem de corrente, material claramente recebido de outras pessoas (capas e artes do próprio dono do acervo vão em arte_capa)' },
 
   { chave: 'video_bruto',     tipo: 'video', pasta: 'Vídeos/Conteúdo - gravação bruta',
     regra: 'pessoa falando para a câmera, enquadramento de gravação de conteúdo, SEM legenda nem efeitos de edição' },
@@ -196,6 +198,73 @@ function processarLote() {
     }
   } finally {
     trava.releaseLock();
+  }
+}
+
+/**
+ * Reavalia, com as regras atuais de CATEGORIAS, as fotos que já estão nas pastas da lista
+ * RECLASSIFICAR. Serve para depois de criar ou mudar uma categoria. Cada execução trabalha
+ * até 4,5 minutos e guarda onde parou; execute de novo até o registro dizer "concluída".
+ * Nunca manda nada para "Sugestão de apagar": só troca de pasta quando a IA indica outra.
+ */
+var RECLASSIFICAR = ['Fotos/Fotos minhas', 'Fotos/Memes e imagens recebidas'];
+
+function reclassificar() {
+  var inicio = Date.now();
+  var props = PropertiesService.getScriptProperties();
+  var chave = props.getProperty('ANTHROPIC_API_KEY');
+  if (!chave) throw new Error('Cadastre ANTHROPIC_API_KEY antes de reclassificar.');
+  var pastas = JSON.parse(props.getProperty('PASTAS'));
+  var aba = abaRegistro_();
+  var fim = Number(props.getProperty('RECLASS_FIM') || 0);
+  if (!fim) { fim = aba.getLastRow(); props.setProperty('RECLASS_FIM', String(fim)); }
+  var linhaAtual = Number(props.getProperty('RECLASS_LINHA') || 2);
+  var vistos = 0, mudou = 0;
+
+  while (linhaAtual <= fim && Date.now() - inicio < CONFIG.TEMPO_MAX_MS) {
+    var bloco = aba.getRange(linhaAtual, 1, Math.min(200, fim - linhaAtual + 1), COLUNAS.length).getValues();
+    var lote = [];
+    var i = 0;
+    for (; i < bloco.length && lote.length < CONFIG.ARQUIVOS_POR_PEDIDO; i++) {
+      var l = bloco[i];
+      if (l[3] === 'foto' && RECLASSIFICAR.indexOf(l[8]) >= 0) {
+        lote.push({ linha: linhaAtual + i, dados: l, id: String(l[2]), nome: String(l[1]), tipo: 'foto', duracao: 0, miniatura: '' });
+      }
+    }
+    if (lote.length) {
+      var miniaturas = baixarMiniaturas_(lote);
+      var comImagem = [];
+      lote.forEach(function (a, k) { if (miniaturas[k]) { a.imagem = miniaturas[k]; comImagem.push(a); } });
+      if (comImagem.length) {
+        var respostas = classificar_(comImagem, chave);   // se a API falhar, a linha de retomada não avança
+        comImagem.forEach(function (a, k) {
+          if (!respostas[k]) return;                       // sem resposta: fica onde está
+          var r = validar_(respostas[k], a);
+          var cat = categoria_(r.categoria);
+          if (cat.chave === 'nao_identificado' || cat.pasta === a.dados[8]) return;
+          mover_(a.id, pastas[cat.chave]);
+          a.dados[4] = cat.chave;
+          a.dados[5] = r.limpeza === 'apagar' ? 'revisar' : r.limpeza;
+          a.dados[6] = r.motivo;
+          a.dados[7] = r.descricao;
+          a.dados[8] = cat.pasta;
+          aba.getRange(a.linha, 1, 1, COLUNAS.length).setValues([a.dados]);
+          mudou++;
+        });
+      }
+      vistos += lote.length;
+    }
+    linhaAtual += i;
+    props.setProperty('RECLASS_LINHA', String(linhaAtual));
+  }
+
+  Logger.log('Reavaliadas ' + vistos + ' fotos nesta execução; ' + mudou + ' mudaram de pasta.');
+  if (linhaAtual > fim) {
+    props.deleteProperty('RECLASS_LINHA');
+    props.deleteProperty('RECLASS_FIM');
+    Logger.log('Reclassificação concluída.');
+  } else {
+    Logger.log('Ainda falta: parou na linha ' + linhaAtual + ' de ' + fim + '. Execute reclassificar de novo.');
   }
 }
 
