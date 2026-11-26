@@ -90,3 +90,11 @@ e execute `configurar` de novo. Para reavaliar o que já foi classificado, ajust
   publicado: marca como "editado (pronto)" o vídeo que tem legenda ou edição visível.
 - Duplicados: só cópias idênticas. Fotos parecidas (sequências do mesmo momento) não são detectadas.
 - Mover arquivos no Drive não apaga nada do iCloud nem do iPhone.
+
+## Apagar também no iCloud e no iPhone
+
+O **Apagar** do painel grava o nome do arquivo em `Banco de Imagens/apagar-do-icloud.txt`.
+No computador, `sincronizar-apagados.ps1` (tarefa agendada do Windows, a cada 10 minutos) lê essa
+lista e apaga os mesmos nomes da pasta do iCloud para Windows; o iCloud tira do iPhone e guarda
+30 dias em "Apagados". Só funciona com o computador ligado. Trava: mais de 300 arquivos de uma vez
+não são apagados sem conferência. `copiar-lote.ps1` é o script que traz o acervo do iCloud para a Entrada.

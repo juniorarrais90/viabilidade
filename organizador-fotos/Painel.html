@@ -306,8 +306,9 @@
   function apagar() {
     var ids = selecionados();
     if (!ids.length) return;
-    if (!confirm('Enviar ' + ids.length + ' arquivo(s) para a lixeira do Google Drive?\n\n' +
-                 'Eles ficam na lixeira por 30 dias e podem ser restaurados nesse prazo.')) return;
+    if (!confirm('Apagar ' + ids.length + ' arquivo(s)?\n\n' +
+                 'Eles saem do Google Drive e também do iCloud e do iPhone (em até 10 minutos, com o computador ligado).\n' +
+                 'Ficam 30 dias na lixeira do Drive e em "Apagados" no app Fotos.')) return;
     aberta.ocupado = true;
     recado('Enviando ' + numero(ids.length) + ' arquivo(s) para a lixeira…');
     desenharGaleria();

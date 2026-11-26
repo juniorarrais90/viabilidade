@@ -70,6 +70,7 @@ var PASTA_DUPLICADOS = 'Duplicados';
 var PASTA_APAGAR = 'Sugestão de apagar';
 var PASTA_SEM_MINIATURA = 'Sem miniatura';
 var DESTINO_LIXEIRA = 'Lixeira do Drive';   // marca na planilha o que foi apagado pelo painel
+var ARQUIVO_ICLOUD = 'apagar-do-icloud.txt'; // lista lida pelo computador para apagar também no iCloud
 
 var COLUNAS = ['Data', 'Nome', 'ID', 'Tipo', 'Categoria', 'Limpeza', 'Motivo', 'Descrição',
                'Destino', 'Tamanho (MB)', 'Caminho original', 'MD5'];
@@ -511,12 +512,41 @@ function moverArquivos(ids, destino) {
  * Não é exclusão definitiva: o Drive guarda a lixeira por 30 dias.
  */
 function apagarArquivos(ids) {
-  return atualizarLinhas_(ids, function (id, linha) {
+  var r = atualizarLinhas_(ids, function (id, linha) {
     DriveApp.getFileById(id).setTrashed(true);
     linha[5] = 'apagado';
     linha[6] = 'Enviado para a lixeira pelo painel';
     linha[8] = DESTINO_LIXEIRA;
   });
+  try { r.icloud = gravarListaIcloud(); } catch (e) { r.icloud = -1; }
+  return r;
+}
+
+/**
+ * Grava em "Banco de Imagens/apagar-do-icloud.txt" o nome de tudo o que foi apagado pelo painel.
+ * Uma rotina no computador lê esse arquivo e apaga os mesmos nomes da pasta do iCloud
+ * (somem do iCloud e do iPhone; ficam 30 dias em "Apagados" no app Fotos).
+ * Um nome só entra na lista se NENHUMA outra cópia com o mesmo nome continua guardada:
+ * arquivo copiado duas vezes para o Drive é uma foto só no celular.
+ */
+function gravarListaIcloud() {
+  var aba = abaRegistro_();
+  var ultima = aba.getLastRow();
+  var linhas = ultima > 1 ? aba.getRange(2, 2, ultima - 1, 8).getValues() : [];
+  var apagados = {}, vivos = {};
+  linhas.forEach(function (l) {
+    var nome = String(l[0]);
+    if (!nome) return;
+    if (l[7] === DESTINO_LIXEIRA) apagados[nome] = true; else vivos[nome] = true;
+  });
+  var nomes = Object.keys(apagados).filter(function (n) { return !vivos[n]; }).sort();
+  var raiz = pastaPorNome_(DriveApp.getRootFolder(), CONFIG.PASTA_RAIZ);
+  var texto = nomes.join('\n');
+  var arquivos = raiz.getFilesByName(ARQUIVO_ICLOUD);
+  if (arquivos.hasNext()) arquivos.next().setContent(texto);
+  else raiz.createFile(ARQUIVO_ICLOUD, texto, MimeType.PLAIN_TEXT);
+  Logger.log('Lista do iCloud gravada com ' + nomes.length + ' nome(s).');
+  return nomes.length;
 }
 
 /** Aplica uma ação a cada arquivo e regrava a linha dele na planilha. */
